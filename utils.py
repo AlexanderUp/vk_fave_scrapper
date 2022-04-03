@@ -47,6 +47,9 @@ def parse_url(url, url_pattern=URL_PATTERN):
                             match_object.group('photo_id'))
     return parsed_url
 
+def parse_json(response):
+    pass
+
 def get_hash(file, chunk_size=MAX_CHUNK_SIZE):
     hasher = sha256()
     with open(file, 'br') as f:
@@ -55,3 +58,6 @@ def get_hash(file, chunk_size=MAX_CHUNK_SIZE):
             hasher.update(chunk)
             chunk = f.read(chunk_size)
     return hasher.hexdigest()
+
+def create_backup():
+    pass
