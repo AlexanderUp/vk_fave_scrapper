@@ -4,20 +4,22 @@
 import os
 import logging
 import json
-
-import db_models
+import re
 
 from pprint import pprint
 from sqlalchemy.orm import mapper
+from io import BytesIO
 
 from vk_scrapper import VK_Scrapper
 from utils import parse_url_file
 from utils import read_source_dir
 from utils import parse_url
-from utils import get_hash
+from utils import get_json
 
 
 SOURCE_FOLDER = 'source'
+JSON_FOLDER = 'json_files'
+DOWNLOAD_FOLDER = os.path.expanduser('~/Desktop/Python - my projects/vk_fave_img_scrapper/test_folder')
 
 
 if __name__ == '__main__':
@@ -30,54 +32,40 @@ if __name__ == '__main__':
     print(vk)
     print('-'*25)
 
-    path_to_source_dir = os.path.join(os.getcwd(), SOURCE_FOLDER)
-    logging.info(f'>>>> Source dir: {path_to_source_dir}')
-    print('-'*25)
+    '''<<Defining source files directory>>'''
+    # path_to_source_dir = os.path.join(os.getcwd(), SOURCE_FOLDER)
+    # logging.info(f'>>>> Source dir: {path_to_source_dir}')
+    # print('-'*25)
 
+    '''<<Process file with likes in specified folder>>'''
     # url_count = 0
     # for source in read_source_dir(path_to_source_dir):
     #     urls = parse_url_file(source)
     #     url_count += len(urls)
     #     vk.update_db(urls)
-    # vk.close()
-    #
     # logging.info(f'URLs processed: {url_count}')
     # print('-'*25)
 
-    # queried_url_object = vk._query_url()
-    # print(queried_url_object)
-    # print(queried_url_object.album_name)
-    # print(queried_url_object.owner_id)
-    # print(queried_url_object.photo_id)
-
-
+    '''<<Check quantity of objects queried from db>>'''
     # total_yielded = 0
-    # for u in vk._query_url():
-    #     print(u)
+    # for u in vk._query_urls():
     #     total_yielded += 1
-    # # vk.process_url(queried_url_object)
     # print(f'Total: {total_yielded}')
     # print('-'*25)
 
-    vk.process_urls()
+    '''<<Process urls from db>>'''
+    # vk.process_urls()
+    # print('-'*25)
+
+    '''<<Normalize db - delete entries with empty resource_url and resource_url-duplicated entries>>'''
+    # vk.normalize_db()
+    # print('-'*25)
+
+    '''<Downloading file with given url with VK_Scrupper>'''
+    vk.download_images()
     print('-'*25)
 
-    json_str = '{"error":{"error_code":100,' \
-    '"error_msg":"One of the parameters specified was missing or invalid: album_id is invalid",' \
-    '"request_params":[{"key":"album_id","value":"photo"},' \
-    '{"key":"owner_id","value":"-71375900"},' \
-    '{"key":"photo_ids","value":"457242935"},' \
-    '{"key":"v","value":"5.131"},' \
-    '{"key":"method","value":"photos.get"},' \
-    '{"key":"oauth","value":"1"}]}}' \
-
-    # vk._save_json(queried_url_object.url, json_str)
-
-    # p = os.path.expanduser('~/Desktop/Python - my projects/vk_fave_img_scrapper/json_files/photo-71375900_457242935?reply=8396.json')
-    #
-    # with open(p, 'r') as f:
-    #     st = json.load(f)
-    # print('-'*25)
-    # print('json read:')
-    # print(st)
-    # print(st == json_str)
+    '''<<Close db in VK object>>'''
+    vk.close()
+    logging.info('VK DB closed.')
+    print('-'*25)

@@ -7,6 +7,7 @@
 *.json
 *.bash
 *.csv
+*.json
 *_config.py
 __pycache__/*
 myvenv/*
@@ -15,6 +16,8 @@ test_folder/*
 source/*
 output/*
 dataset*/
+source/*
+json_files/*
 .DS_Store
 /*.jpg
 /out*.*

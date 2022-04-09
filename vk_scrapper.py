@@ -10,36 +10,33 @@
 import os
 import sqlalchemy
 import logging
-import requests
-import json
 import re
 import time
+import json
+
+from sqlalchemy import create_engine
+from sqlalchemy import func
+from sqlalchemy.orm import mapper
+from sqlalchemy.orm import sessionmaker
+from io import BytesIO
 
 import db_models as dbm
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import mapper
-from sqlalchemy.orm import sessionmaker
-
 from db_models import URL
 from utils import parse_url
+from utils import get_json
+from utils import parse_json_response
+from utils import get_file_path_to_save
+from utils import download_file
+from utils import get_hash
 
 
 mapper(dbm.URL, dbm.url_table)
 
 
-ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN')
 PATH_TO_DB = 'url_db.sqlite3'
-BASE_URL = 'https://api.vk.com/method/'
-BASE_METHOD = 'photos.get'
-API_VERSION = '5.131'
-URL_TEMPLATE = 'https://api.vk.com/method/{base_method}' \
-                '?access_token={access_token}' \
-                '&album_id={album_name}' \
-                '&owner_id={owner_id}' \
-                '&photo_ids={photo_id}' \
-                '&v={api_version}'
 FOLDER_JSON = 'json_files'
+QUERY_YIELD_PER_COUNT = 20
 TIME_OUT = .5
 
 
@@ -91,50 +88,102 @@ class VK_Scrapper():
                 continue
         return None
 
-    def _query_url(self):
-        # yield from self._session.query(URL).slice(0, 200).yield_per(20)
-        yield from self._session.query(URL).yield_per(20)
+    def _query_urls(self):
+        yield from self._session.query(URL).yield_per(QUERY_YIELD_PER_COUNT)
 
-    def _get_json(self,
-                queried_url_object,
-                base_method=BASE_METHOD,
-                access_token=ACCESS_TOKEN,
-                api_version=API_VERSION,
-                ):
-        '''Get appropriate json response for url request.'''
-        url = URL_TEMPLATE.format(base_method=base_method,
-                                    access_token=access_token,
-                                    album_name=queried_url_object.album_name,
-                                    owner_id=queried_url_object.owner_id,
-                                    photo_id=queried_url_object.photo_id,
-                                    api_version=api_version)
-        logging.debug(f'Getting json for [{url}]')
-        r = requests.get(url)
-        return r.status_code, r.content
+    def query_url_by_id(self, url_id):
+        return self._session.query(URL).filter(URL.id==url_id).first()
 
     def _save_json(self, queried_url_object, json_string, folder=FOLDER_JSON):
         splited_url = re.split('https://vk.com/', queried_url_object.url)
         path = os.path.join(os.getcwd(), folder, f'{queried_url_object.id}_{splited_url[1]}.json')
         logging.debug(f'Path to save: {path}')
-        with open(path, 'w') as f:
-            json.dump(json_string.decode('utf-8'), f)
+        with open(path, 'wb') as f:
+            f.write(json_string)
         return None
 
-    def _process_current_url(self, queried_url_object):
-        status_code, response_content = self._get_json(queried_url_object)
+    def _process_given_url(self, queried_url_object):
+        status_code, response_content = get_json(queried_url_object)
         if status_code == 200:
             self._save_json(queried_url_object, response_content)
+            json_file_obj = BytesIO()
+            json_file_obj.write(response_content)
+            json_file_obj.seek(0)
+            json_response = json.load(json_file_obj)
+            try:
+                url = parse_json_response(json_response)
+            except KeyError as err:
+                logging.error(f'Error occured: {err} with id({queried_url_object.id})[{queried_url_object}]')
+                queried_url_object.resource_url = 'Error'
+            else:
+                queried_url_object.resource_url = url
+                logging.info(f'Processed... id({queried_url_object.id})[{queried_url_object}]')
+            finally:
+                self._session.add(queried_url_object)
+                json_file_obj.close()
         else:
-            logging.error(f'Error with {queried_url_object}')
-            logging.error(f'status_code: {status_code}')
+            logging.error(f'Status code: {status_code}')
         return None
 
     def process_urls(self):
-        for queried_url_object in self._query_url():
-            logging.info(f'Processing url... id({queried_url_object.id})[{queried_url_object}]')
-            self._process_current_url(queried_url_object)
+        for queried_url_object in self._query_urls():
+            self._process_given_url(queried_url_object)
             time.sleep(TIME_OUT)
+        try:
+            self._session.commit()
+        except sqlalchemy.exc.SQLAlchemyError as err:
+            logging.error(f'Error occured: {err}')
+            logging.error(f'Error-prone object: {queried_url_object}')
+            self._session.rollback()
+            logging.error('Session has been rolled back.')
         return None
 
-    def _parse_json(self, json_string):
-        pass
+    def download_images(self):
+        count = self._session.query(URL).filter(URL.resource_url.is_not('Error')).count()
+        logging.info(f'Downloadable URL count: {count}')
+        for url_object in self._session.query(URL).filter(URL.resource_url.is_not('Error')).yield_per(QUERY_YIELD_PER_COUNT):
+            url = url_object.resource_url
+            try:
+                file_path = get_file_path_to_save(url)
+            except AttributeError as err:
+                logging.error(f'Error occured: {err}')
+                logging.error(f'Error-prone URL: {url}')
+                continue
+            else:
+                try:
+                    download_file(url, file_path)
+                except Exception as err:
+                    logging.error(f'Error occured: {err}')
+                else:
+                    file_hash = get_hash(file_path)
+                    url_object.hash = file_hash
+                    url_object.is_downloaded = True
+                    self._session.add(url_object)
+            time.sleep(TIME_OUT)
+        try:
+            self._session.commit()
+        except qlalchemy.exc.SQLAlchemyError as err:
+            logging.error(f'Error occured: {err}')
+            logging.error(f'Error-prone object: {url_object}')
+            self._session.rollback()
+            logging.error('Session has been rolled back.')
+        return None
+
+    def normalize_db(self):
+        empty_url_objects_count = self._session.query(URL).filter(URL.resource_url.is_(None)).count()
+        logging.info(f'Empty URL objects count: {empty_url_objects_count}')
+        duplicated_resource_urls = self._session.query(URL).filter(URL.resource_url.is_not('Error')).group_by(URL.resource_url).order_by(URL.id.asc())
+        for duplicated_url_object in duplicated_resource_urls.having(func.count(URL.resource_url)>1):
+            curr_obj_dup_count = self._session.query(URL).filter(URL.resource_url == duplicated_url_object.resource_url).count()
+            logging.info(f'Count: {curr_obj_dup_count}, {duplicated_url_object}')
+            sub_query = self._session.query(URL).filter(URL.resource_url == duplicated_url_object.resource_url).all()
+            for url_object in sub_query[1:]:
+                self._session.delete(url_object)
+                logging.info(f'Deleted: {url_object}')
+        try:
+            self._session.commit()
+        except sqlalchemy.exc.SQLAlchemyError as err:
+            logging.error(f'Error occured: {err}')
+            self._session.rollback()
+            logging.error('Session has been rolled back.')
+        return None
